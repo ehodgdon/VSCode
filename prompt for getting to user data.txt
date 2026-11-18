@@ -1,0 +1,164 @@
+After I have selected a student and chapter/section, I want to extract several pieces of information.
+The student is allowed to make as many attempts as necessary to complete the lab. For each attempt,
+I want to retrieve the Python source and the zyBooks feedback
+chapter
+    -student
+        -attempt
+	    -feedback
+            -Python source
+
+Here's the current download_lab_files. The new functions should probably be called from the bottom
+of this function.
+
+    def download_lab_files(self, chapter_numbers : list, student_list : list):
+        # No need to step through chapter_numbers since iter_lab_urls does that
+        # lab_urls completely exhausts the generator before proceeding
+        lab_urls = list(self.iter_lab_urls(chapter_numbers))
+                        
+        for url in  lab_urls:
+            url = url_prefix + url
+            print(f"Processing: {url}")
+
+            self.page.goto(url)
+            self.open_student_activity()
+
+            for student_name in student_list:
+                print(f"    Selecting student: {student_name}")
+
+                self.select_student(student_name)
+
+                # Analyze /download this student's LAB data here.
+
+
+I consider this phase 1. After the student has been selected, there is an element at the bottom of the page, there are two
+possibilities. One, that the user has not done anything, in which case "No submissions" is shown as
+such:
+<div class="student-review-item w-full py-2" role="button">
+    <div class="w-full h-full">
+        <div class="student-test-score-row items-center flex justify-between">
+            <span class="student-header">
+                Student
+                One
+<!---->            </span>
+            <div class="flex pr-11">
+                        <div class="student-score-test-column">
+                            <div class="flex mx-2">
+                                        <div class="test-row-header">0</div>
+                                        <div class="test-row-header">0</div>
+                            </div>
+                        </div>
+
+<!---->
+                <div class="student-score-test-column">
+                    <div class="flex mx-2">
+                        <div class="test-row-header">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+            <div class="subtext-color text-sm italic">No submissions</div>
+    </div>
+</div>
+
+Second, the user has made one or more attempts, as depicted as
+<div class="student-review-item w-full py-2" role="button">
+    <div class="w-full h-full">
+        <div class="student-test-score-row items-center flex justify-between">
+            <span class="student-header">
+                Student
+                Two
+<!---->            </span>
+            <div class="flex pr-11">
+                        <div class="student-score-test-column">
+                            <div class="flex mx-2">
+                                        <div class="test-row-header">5</div>
+                                        <div class="test-row-header">5</div>
+                            </div>
+                        </div>
+
+<!---->
+                <div class="student-score-test-column">
+                    <div class="flex mx-2">
+                        <div class="test-row-header">10</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+            <div class="zylab-signature sub-signature ">
+<!---->
+    <div class="signature-content flex-wrap ">
+            11/9  M-0,0,0,0,0-0,0,0,0,10 min:56
+    </div>
+
+<!----></div>
+            </div>
+</div>
+
+The line "11/9  M-0,0, . . ." is a show of the times the student worked on the lab, and is not necessary to capture, but
+is only present if attempts have been made. 
+At the end of that element, there is a up/down arrow. If it is a down arrow, I need to click on it.
+<div class="ml-auto">
+                                            <button aria-busy="false" class="zb-button
+        grey
+ 
+        right
+        " aria-controls="e6f1a335-28e0-4ad4-811e-12f4b2f69f57" aria-expanded="true" aria-labelledby="e29558e6-f2af-404b-9536-e258226b5355 fd79d951-0c4b-4c6b-9114-424c1caa7745" type="button" fdprocessedid="amd4z7"><i aria-label="expand_less" class="zb-icon material-symbols-outlined med grey " role="img" aria-hidden="true">
+            expand_less
+<!----></i><!----><!----></button>
+                                        </div>
+
+This will bring up a list of attempts. No limit on the number of attempts.
+
+I look at  this as phase 2
+We will need to step through each attempt to get the information that we want. The attempt element looks like
+<div class="item-row flex relative body-text items-center px-4 h-12
+                                        grey
+                                        enable-hover" role="row">
+                                    <div class="flex space-x-8 margin-auto">
+        <span class="mr-4"></span>
+
+    <span class="text-sm w-24">11/9/26</span>
+    <span class="text-sm w-24">1:34 PM EST</span>
+    <span class="text-sm w-24">
+        10
+        /
+        10
+    </span>
+
+<!---->        <div class="flex mr-0 ml-auto test items-center">
+            <div class="bailey-boxes">
+                    <div class="box green">
+                        <span>5</span>
+                    </div>
+                    <div class="box green">
+                        <span>5</span>
+                    </div>
+            </div>
+        </div>
+</div>
+                                        <div class="ml-auto" role="cell">
+                                            <button aria-busy="false" class="zb-button
+        grey
+        
+        right
+        
+        " aria-controls="e9411206-a44f-4aa7-8dbf-cb17bbf08a71" aria-expanded="false" aria-labelledby="e69b5c24-883d-45b4-aa36-8a08f77e2aad eecf8868-9c8d-4848-9b4c-1918beb85f6b" type="button" fdprocessedid="4ha356"><i aria-label="expand_more" class="zb-icon material-symbols-outlined med grey " role="img" aria-hidden="true">
+            expand_more
+<!----></i><!----><!----></button>
+                                        </div>
+                                </div>
+
+We'll want to capture the date/time and use it as a key to the other information.  We'll also need to capture the score -- "10/10" in this case. 
+We will be clicking on the up/down arrow for the next phase.
+
+chapter
+    -student
+        -attempt (date/time, score, navigation arrow)
+	    -feedback
+            -Python source
+
+
+I see three major functions: get_attempts, get_feedback, and get_source,  and whatever minor functions are needed to support this.
+Let's not try to do this all at once but in manageable phases.
