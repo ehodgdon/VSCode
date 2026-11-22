@@ -6,6 +6,7 @@ import tkinter as tk
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Locator
 from playwright.sync_api import expect
 
 import time
@@ -85,7 +86,7 @@ class WebServices(object):
                              "Austin Lancaster", "Chase Mihal", "Noemi Perez", "TRAVIS RUSKAMP", 
                              "Ethan Sunday", "Nozima Tuychieva", "akira Tyler", "Michael Urbaschek", 
                              "Demitrus Ware"]
-                self.download_lab_files([1], ["Daydee Guerra"])
+                self.download_lab_files([1], test_list)
 
                 print('*** DONE ***')
 
@@ -366,14 +367,13 @@ class WebServices(object):
             section_number = self.get_section_from_url(url)
 
             for student_name in student_list:
-                print(
-                    f"    Selecting student: {student_name}"
-                )
+                print(f"    Selecting student: {student_name}")
 
-                self.select_student(student_name)
+                student_row = self.select_student(student_name)
+                
 
-                attempts = self.get_attempts(student_name)
-                print("ATTEMPTS: ", attempts)
+                attempts = self.get_attempts(student_row, student_name)
+                # print("ATTEMPTS: ", attempts)
 
 
                 results.append({
@@ -393,7 +393,7 @@ class WebServices(object):
         
             print(f"    Lab pages for {student_name} have been processed")
         return results                
-# -----------------------------------------------------------------------------   \
+# -----------------------------------------------------------------------------   
 # 
 # Phase 1: Locate the selected student row             
     def get_student_row(self, student_name: str):
@@ -523,10 +523,7 @@ class WebServices(object):
             expanded_container.inner_text().split()
         )
 
-        print(
-            f"        EXPANDED TEXT for {student_name}: "
-            f"{expanded_text!r}"
-        )
+        # print(f"        EXPANDED TEXT for {student_name}: {expanded_text!r}")
 
         # Legitimate no-attempt states.
         no_attempt_states = (
@@ -555,19 +552,20 @@ class WebServices(object):
             f"Text was: {expanded_text!r}"
         )    
     # Phase 2D: Extract attempts
-    def get_attempts(self, student_name: str) -> list:
-        student_row = self.get_student_row(student_name)
+    def get_attempts(self, student_row: str, student_name) -> list:
 
         if student_row is None:
             raise RuntimeError(
                 f"Could not find the row for {student_name!r}."
             )
 
+        top_row = self.page.get_by_role("table")
+        attempt_rows = top_row.locator("div.item-row")
+
         if self.student_has_no_submissions(student_row):
-            print(
-                f"        No submissions for {student_name}"
-            )
+            print(f"        No submissions for {student_name}")
             return []
+        
 
         attempt_container = self.get_attempt_container(
             student_row,
@@ -580,10 +578,7 @@ class WebServices(object):
                 f"{student_name}"
             )
             return []
-
-        attempt_rows = attempt_container.locator(
-            '[role="row"]:has(span.text-sm.w-24)'
-        )
+        
 
         expect(attempt_rows.first).to_be_visible(
             timeout=20000
@@ -652,20 +647,17 @@ class WebServices(object):
     ):
         end_time = time.monotonic() + timeout
 
-        while time.monotonic() < end_time:
-            student_row = self.get_student_row(
-                student_name
-            )
-
-            if student_row is not None:
-                return student_row
-
-            time.sleep(0.1)
-
-        raise RuntimeError(
-            f"Timed out waiting for {student_name!r} "
-            "to appear in Student Activity."
-        )
+        block = self.page.locator('//div[@class="list flex flex-col"]').first
+        print("WAIT FOR STUDENT ROW")
+       
+        # Wait for it to exist in the DOM 
+        block.wait_for(state="attached", timeout=end_time)
+       
+        expect(block).not_to_contain_text("Loading", timeout=end_time)
+        
+        
+        pass
+       
 # -------------------- end ----------------------------------------------------
 
 
@@ -692,158 +684,50 @@ class WebServices(object):
 
         if button.get_attribute("aria-expanded") == "false":
             button.click()
-
-    def select_student(self, student_name: str):
+  
+       
+    def select_student(self, student_name: str) -> Locator:
         panel = self.get_student_activity_panel()
-
-        student_combobox = panel.get_by_role(
-            "combobox",
-            name="Students",
-        )
-
+        student_combobox = panel.get_by_role("combobox", name="Students")
         student_combobox.click()
 
-        dropdown = self.page.locator(
-            ".ember-power-select-dropdown:visible"
-        )
 
-        expect(dropdown).to_be_visible(
-            timeout=20_000,
-        )
+        dropdown = self.page.locator(".ember-power-select-dropdown:visible")
+        expect(dropdown).to_be_visible(timeout=20_000)
 
-        search_input = dropdown.locator(
-            ".ember-power-select-search-input"
-        )
-
-        expect(search_input).to_be_visible(
-            timeout=20_000,
-        )
-
-        search_input.fill(student_name)
-
-        expect(search_input).to_have_value(
-            student_name,
-            timeout=20_000,
-        )
-
-        expect(dropdown).to_contain_text(
-            "1 result",
-            timeout=20_000,
-        )
-
-        search_input.focus()
-
-        expect(search_input).to_be_focused(
-            timeout=5_000,
-        )
-
-        search_input.press("ArrowDown")
-
-        search_input.press("Enter")
-
-        input("STOP - inspect Students and Student Activity")
-
-        # -----------------------------------------
-        # Experimental section starts here.
-        # Reproduce the physical mouse interaction
-        # with the Find field.
-        # -----------------------------------------
-
-        box = search_input.bounding_box()
-
-        if box is None:
-            raise RuntimeError(
-                "Could not get bounding box for Find field."
-            )
-
-        x = box["x"] + box["width"] / 2
-        y = box["y"] + box["height"] / 2
-
-        print("SEARCH INPUT BOX:", box)
-        print("CENTER:", x, y)
-
-        element_at_center = self.page.evaluate(
-            """
-            ([x, y]) => {
-                const el = document.elementFromPoint(x, y);
-
-                if (!el) {
-                    return null;
-                }
-
-                return {
-                    tag: el.tagName,
-                    id: el.id,
-                    className: el.className,
-                    role: el.getAttribute("role"),
-                    value: el.value,
-                    outerHTML: el.outerHTML
-                };
-            }
-            """,
-            [x, y],
-        )
-
-        print("\nELEMENT AT CENTER:")
-        print(element_at_center)
-
-        input("STOP - inspect")
+        
+        # Wait for any loading spinner to finish and options to render
+        expect(dropdown.locator(".ember-power-select-option--loading-message")).to_be_hidden(timeout=15_000)
+        options = dropdown.locator(".ember-power-select-option:not(.ember-power-select-option--loading-message)")
+        expect(options.first).to_be_visible(timeout=15_000)
+        # print(f"Rendered options count: {options.count()}")
 
 
+        # Match using word boundaries instead of strict start/end anchors
+        matching_option = options.filter(
+            has_text=re.compile(rf"\b{re.escape(student_name)}\b", re.IGNORECASE)
+        ).first
 
-        x = box["x"] + box["width"] / 2
-        y = box["y"] + box["height"] / 2
+        matching_option.scroll_into_view_if_needed()
+        expect(matching_option).to_be_visible(timeout=5_000)
+        self.page.wait_for_timeout(timeout=2_000)
 
-        # Move the mouse into the Find field.
-        self.page.mouse.move(x, y)
-
-        # First physical-style click.
-        self.page.mouse.down()
-        self.page.mouse.up()
-
-        # Second physical-style click.
-        self.page.mouse.down()
-        self.page.mouse.up()
-
-        active = self.page.evaluate(
-            """
-            () => {
-                const el = document.activeElement;
-                return {
-                    tag: el?.tagName,
-                    id: el?.id,
-                    className: el?.className,
-                    role: el?.getAttribute("role"),
-                    ariaLabel: el?.getAttribute("aria-label"),
-                    value: el?.value
-                };
-            }
-            """
-        )
-
-        print("ACTIVE ELEMENT AFTER TWO CLICKS:")
-        print(active)
-
-        input("STOP - inspect focus")
+        matching_option.click() 
 
 
-        # Confirm that our search text survived the clicks.
-        expect(search_input).to_have_value(
-            student_name,
-            timeout=5_000,
-        )
+        row = self.page.locator(".item-row").filter(has_text=student_name)
+        row.wait_for(state="visible", timeout=10_000)
 
-        # Press Return while Find has focus.
-        self.page.keyboard.press("Enter")
+        row.click()
 
-        # Stop before doing anything else.
-        input("STOP - inspect page")
+        try:
+            expect(row).to_contain_text(re.compile(r"min:\d+|No submissions"), timeout=5_000)
+        except AssertionError:
+            print('TimeoutError: ', ' '.join(row.inner_text().split('\n')))
 
-    
-    
-    
-    
-    
+        return row
+        
+
     def skip_tutorial_if_present(self):
         dialog = self.page.get_by_role("dialog")
 
@@ -912,7 +796,7 @@ class WebServices(object):
         # save_as() waits for the download to complete if necessary.
         download.save_as(destination)
 
-        print(f"Downloaded: {filename}")
+        # print(f"Downloaded: {filename}")
         print(f"Saved to:   {destination}")
 
         # Return the complete pathname for subsequent processing
@@ -922,8 +806,6 @@ class WebServices(object):
     # using the report file name, extract pertinent course parameters
     def extract_course_parameters(self, filename):
         try:
-            print(str(filename))
-            print(report_file_name_pattern())
             match = re.match(report_file_name_pattern(), str(filename))
             self.course = match.group('course')
             self.term = match.group('term')
@@ -937,6 +819,22 @@ class WebServices(object):
  
 # =============================================================================
     # diagnostic purposes only
+    def html_changes(self, page, expression, *args, **kwargs):
+        import difflib
+        before = page.content()
+        expression(*args, **kwargs)
+        after = page.content()
+        diff = difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile = "before",
+            tofile = "after",
+            n = 0, 
+            lineterm=""
+        )
+        print("\n".join(diff))
+        return
+
     def determine_element_type(self, search_name):
         print("button:", self.page.get_by_role("button", name=search_name).count())
 
