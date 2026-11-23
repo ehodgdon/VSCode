@@ -1,5 +1,4 @@
-
-
+import os
 import re
 import sys
 import tkinter as tk
@@ -10,6 +9,9 @@ from playwright.sync_api import Locator
 from playwright.sync_api import expect
 
 import time
+from io import BytesIO
+from PIL import Image
+import zipfile
 from pprint import pprint
 
 
@@ -388,9 +390,12 @@ class WebServices(object):
                     print(
                         f'        {attempt["date"]} '
                         f'{attempt["time"]}: '
-                        f'{attempt["score"]}'
+                        f'{attempt["score"]} '
+                        f'{attempt["program"]}'
                     )
-        
+
+
+
             print(f"    Lab pages for {student_name} have been processed")
         return results                
 # -----------------------------------------------------------------------------   
@@ -607,16 +612,137 @@ class WebServices(object):
             score = "".join(
                 fields.nth(2).inner_text().split()
             )
+            
+            btn = attempt_row.get_by_role("button")
+            btn.click()
+
+            # Container holding the zyBooks test feedback
+            feedback_container = self.page.locator('div.mr-4')
+
+            # Wait until it actually exists/appears
+            feedback_container.last.wait_for(state="visible")
+
+            # One child element for every zyBooks test in this attempt
+            children = feedback_container.locator(":scope > *")
+
+            feedback = []
+
+            if children.count() > 3:
+                for i in range(2, children.count()):
+                    child = children.nth(i)
+
+                    png = child.screenshot()
+                    feedback.append(png)
+
+            program = self.get_program(student_row, student_name)
+
 
             attempts.append({
                 "date": date,
                 "time": time_value,
                 "score": score,
+                "feedback": feedback,
+                "program": program
             })
 
-        return attempts#
+        return attempts
 
+    def get_program(self, student_row, student_name):
+        program_button = self.page.get_by_role("button", name="Open submission's code")
+        program_button.click()
+
+        return  self.click_download_element(self.session_path)
+
+
+    # frame coding from copilot
+    def click_download_element(self, destination_folder: str | Path) -> list:
     
+        new_files: list[Path] = []
+        destination_folder = Path(destination_folder)
+        destination_folder.mkdir(parents=True, exist_ok=True)
+
+        # Locate the two sibling iframes.
+        iframe_elements = self.page.locator(
+            'iframe[title="Code and output"]'
+        )
+
+        # Equivalent to waiting until Selenium finds exactly two frames.
+        expect(iframe_elements).to_have_count(2, timeout=5_000)
+
+        # Try the frames in reverse order, as in your Selenium code.
+        for index in reversed(range(iframe_elements.count())):
+            try:
+                # Convert this specific iframe element into a FrameLocator.
+                frame = iframe_elements.nth(index).content_frame
+
+                download_button = frame.get_by_role(
+                    "button",
+                    name="Download Project at Timestamp",
+                    exact=True
+                )
+
+                # Wait for this frame's button to become visible.
+                download_button.wait_for(
+                    state="visible",
+                    timeout=5_000
+                )
+
+                # Start listening before performing the download-producing click.
+                with self.page.expect_download(timeout=10_000) as download_info:
+                    download_button.click(timeout=5_000)
+
+                download = download_info.value
+
+                destination = (
+                    destination_folder / download.suggested_filename
+                )
+
+                download.save_as(destination)
+                new_files.append(destination)
+
+                print(f"Downloaded: {destination}")
+                break
+
+            except PlaywrightTimeoutError:
+                print(
+                    f"Download button not found or download not started "
+                    f"in frame {index}"
+                )
+
+                # Try the next frame rather than ending the loop.
+                continue
+
+        if len(new_files) != 1:
+            print("Number of downloaded files is incorrect at ", len(new_files))
+
+        extension = new_files[0].suffix
+        if extension.lower() == ".zip":
+            new_files = self.unzip_zip_file(str(new_files[0]), self.session_path)
+        
+        return new_files
+
+
+    def unzip_zip_file(self, zip_file_path, destination):
+        unzipped_files = []
+        try:
+            with zipfile.ZipFile(zip_file_path) as zipf:
+                for member in zipf.namelist():
+                    if member.endswith('.py'):
+                        zipf.extract(member, destination)
+                        new_file_name = Path(os.path.join(destination, member))
+                        unzipped_files.append(new_file_name)
+
+                        # old_file_path = normjoin(destination, member)
+                        # new_file_path = normjoin(destination, new_file_name)
+                        # if os.path.exists(new_file_path):
+                        #     os.remove(new_file_path)
+                        # os.rename(old_file_path, new_file_path)
+            # os.remove((src))
+        except zipfile.BadZipFile:
+            print("Bad zip file")
+        return unzipped_files
+
+
 # Helper functions ------------------------------------------------------------
 
     def get_chapter_from_url(self, url: str) -> str:
@@ -834,6 +960,9 @@ class WebServices(object):
         )
         print("\n".join(diff))
         return
+
+    def show_png(self, png):
+        Image.open(BytesIO(png)).show()
 
     def determine_element_type(self, search_name):
         print("button:", self.page.get_by_role("button", name=search_name).count())
