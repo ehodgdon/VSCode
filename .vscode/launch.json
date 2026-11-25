@@ -4,15 +4,28 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
+        {"name":"Python Debugger: Current File","type":"debugpy","request":"launch","program":"${file}","console":"integratedTerminal"},
         {
-            "name": "Python Debugger: Current File with Arguments",
+            "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "c:\\users\\ehodgdon\\OneDrive\\SNHU\\IT-140\\zyBooks Grading\\13365", 
+                "c:\\users\\ehodgdon\\OneDrive\\SNHU\\IT-140\\zyBooks Grading\\13365",
+                "e.hodgdon@snhu.edu",
+                "Taffeta8##"
+            ]
+
+        },
+        {
+            "name": "Python Debugger: Grader 5.0",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Grader 5.0.py",
+            "console": "integratedTerminal",
+            "args": [
+                "c:\\users\\ehodgdon\\OneDrive\\SNHU\\IT-140\\zyBooks Grading\\13365",
                 "e.hodgdon@snhu.edu",
                 "Taffeta8##"
             ]

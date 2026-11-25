@@ -8,6 +8,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import Locator
 from playwright.sync_api import expect
 
+import students
+
 import time
 from io import BytesIO
 from PIL import Image
@@ -25,10 +27,9 @@ class WebServices(object):
     def __init__(
                 self,
                 root : tk,
-                username : str = None, 
-                password : str = None,
                 session_path : str = None,
-                
+                username : str = sys.argv[2], 
+                password : str = sys.argv[3],
                 # timeouts
                 page_load_timeout : int = 10,
                 default_timeout : int = 120,
@@ -64,7 +65,12 @@ class WebServices(object):
         print("End of __init__()")
         print(f"base_path: {self.base_path}  session_path: {self.session_path}   session: {self.session}")
 
-    def run(self):
+    def run(self, active_week, report_chapters, lab_chapters, checkbox_only_one_week):
+        self.active_week = active_week
+        self.report_chapters = report_chapters
+        self.lab_chapters = lab_chapters
+        self.only_one_week = checkbox_only_one_week.get()
+
         # initialize the Playwright browser as a context manager to ensure proper cleanup
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False)
@@ -79,7 +85,7 @@ class WebServices(object):
                 self.select_course()
                 # signon is complete, course is selected)
 
-                self.download_report_file([1, 2, 5])
+                self.download_report_file(self.report_chapters)
 
                 test_list = ["John Carlos Aguinaldo", "Samuel Agyei", "Dovi Atikpo", "Monty Antonetty",
                              "Da'Von Baker", "Tara Beck", "Darius Coleman", "Colton Connally", "Jacob Corrice",
@@ -88,9 +94,10 @@ class WebServices(object):
                              "Austin Lancaster", "Chase Mihal", "Noemi Perez", "TRAVIS RUSKAMP", 
                              "Ethan Sunday", "Nozima Tuychieva", "akira Tyler", "Michael Urbaschek", 
                              "Demitrus Ware"]
-                self.download_lab_files([1], test_list)
+                self.download_lab_files(lab_chapters, test_list)
 
                 print('*** DONE ***')
+                print(f"Attempts: {self.tally_attempts}" )
 
 
             # TODO verify session matches
@@ -146,7 +153,7 @@ class WebServices(object):
     # last component of path is session name
     def get_paths(self, session_path):
         if session_path in ['', None]:
-            session_path = sys.argv[1] if len(sys.argv) > 1 else ''
+            session_path = sys.argv[0] if len(sys.argv) > 0 else ''
         else:
             session_path = session_path
         path_obj = Path(session_path)
@@ -218,12 +225,6 @@ class WebServices(object):
         print("Courses found:", courses.count())
 
 
-        for i in range(courses.count()):
-            course = courses.nth(i)
-            
-            link = course.locator('a')
-            href = link.get_attribute('href')
-            print(i, href)
 
     def  select_course(self):
 
@@ -234,7 +235,17 @@ class WebServices(object):
         # Wait for course selection screen to become usable
         courses.first.wait_for(state="visible")
 
-        print("Waiting for user to select a course...")
+        for i in range(courses.count()):
+            course = courses.nth(i)
+            
+            link = course.locator('a')
+            href = link.get_attribute('href')
+            if self.session.lower() in href.lower():
+                course.click()
+                print(href)
+                break
+
+
 
         # Wait indefinitely for user's selection
         self.page.wait_for_url("**/zybook/**", timeout=0)
@@ -342,7 +353,7 @@ class WebServices(object):
         self.chapters_and_sections = self.get_chapters_and_sections(report_chapters)
         
         # Generate and download report
-        self.report_file_path = self.generate_score_report()
+        self.report_file_path = self.generate_score_report(max(report_chapters))
 
         # Extract course information from downloaded filename
         self.extract_course_parameters(self.report_file_path.name)
@@ -394,6 +405,7 @@ class WebServices(object):
                         f'{attempt["program"]}'
                     )
 
+                pass
 
 
             print(f"    Lab pages for {student_name} have been processed")
@@ -644,17 +656,90 @@ class WebServices(object):
                 "feedback": feedback,
                 "program": program
             })
+            self.tally_attempts += 1
 
         return attempts
 
     def get_program(self, student_row, student_name):
         program_button = self.page.get_by_role("button", name="Open submission's code")
+        self.page.wait_for_timeout(timeout=500)
         program_button.click()
 
         return  self.click_download_element(self.session_path)
 
 
     # frame coding from copilot
+    
+    def click_download_element(
+        self,
+        destination_folder: str | Path
+    ) -> list[Path]:
+
+        new_files: list[Path] = []
+
+        destination_folder = Path(destination_folder)
+        destination_folder.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # First confirm that the screenshot's history page is open.
+            frame = self.wait_for_history_frame(timeout=60_000)
+
+            download_button = frame.get_by_role(
+                "button",
+                name="Download Project at Timestamp",
+                exact=True
+            )
+
+            print("Waiting for project download button...")
+
+            download_button.wait_for(
+                state="visible",
+                timeout=30_000
+            )
+
+            print("Project download button is visible")
+            expect(frame).to_have_attribute("src", re.compile(r".*"))
+
+            with self.page.expect_download(timeout=30_000) as download_info:
+                download_button.click(timeout=10_000)                
+
+            download = download_info.value
+
+            destination = (
+                destination_folder /
+                download.suggested_filename
+            )
+
+            download.save_as(destination)
+            new_files.append(destination)
+
+            print(f"Downloaded: {destination}")
+
+        except PlaywrightTimeoutError as exc:
+            print(
+                "Submission history or project download "
+                f"button timed out: {exc}"
+            )
+
+        print(
+            "Number of downloaded files:",
+            len(new_files)
+        )
+
+        if len(new_files) != 1:
+            return new_files
+
+        if new_files[0].suffix.lower() == ".zip":
+            new_files = self.unzip_zip_file(
+                str(new_files[0]),
+                self.session_path
+            )
+
+        return new_files
+    
+    
+
+    
     def click_download_element(self, destination_folder: str | Path) -> list:
     
         new_files: list[Path] = []
@@ -686,6 +771,9 @@ class WebServices(object):
                     state="visible",
                     timeout=5_000
                 )
+                
+                expect(download_button).to_be_enabled(timeout=10_000)
+
 
                 # Start listening before performing the download-producing click.
                 with self.page.expect_download(timeout=10_000) as download_info:
@@ -714,12 +802,14 @@ class WebServices(object):
 
         if len(new_files) != 1:
             print("Number of downloaded files is incorrect at ", len(new_files))
+            return 
 
         extension = new_files[0].suffix
         if extension.lower() == ".zip":
             new_files = self.unzip_zip_file(str(new_files[0]), self.session_path)
         
         return new_files
+    
 
 
     def unzip_zip_file(self, zip_file_path, destination):
@@ -891,12 +981,12 @@ class WebServices(object):
 
             chapter_number = title.split(".", 1)[0]
 
-            if chapter_number in requested_chapters:
-                yield link.get_attribute("href")
+            # TODO add logic to select specifc labs() for week
+            yield link.get_attribute("href")
 
 
 
-    def generate_score_report(self) -> Path:
+    def generate_score_report(self, report_week : int) -> Path:
 
         # Wait for the download to begin when the button is clicked
         with self.page.expect_download() as download_info:
@@ -913,17 +1003,20 @@ class WebServices(object):
         filename = download.suggested_filename
 
         # Construct the complete destination path
-        destination = Path(self.session_path) / filename
+        destination = Path(self.session_path) /  f"{SUBDIRECTORY_PREFIX} {report_week}" / filename
 
         # check for files with .csv extension
-        rename_csv_to_old(self.session_path)
+        try:
+            rename_csv_to_old(destination.parent)
 
-        # Save the file.
-        # save_as() waits for the download to complete if necessary.
-        download.save_as(destination)
+            # Save the file.
+            # save_as() waits for the download to complete if necessary.
+            download.save_as(destination)
 
-        # print(f"Downloaded: {filename}")
-        print(f"Saved to:   {destination}")
+            # print(f"Downloaded: {filename}")
+            print(f"Saved to:   {destination}")
+        except PermissionError:
+            print("Older file is use. Cannot be renames. New file not saved")
 
         # Return the complete pathname for subsequent processing
         return destination
@@ -1007,6 +1100,9 @@ if __name__ == "__main__":
     cmd_line = sys.argv
 
     root = tk.Tk()
+
+    # students = students.Students(root, "c:\\users\\ehodgdon\\onedrive\\snhu\\it-140\\zybooks grading\\13365")
+    # students.initial_download("c:\\users\\ehodgdon\\onedrive\\snhu\\it-140\\zybooks grading\\13365", "aaaa", "bbbb")
 
     server = WebServices(root)
 
